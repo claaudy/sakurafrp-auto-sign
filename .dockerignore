@@ -1,0 +1,9 @@
+# Send only the public files required by Dockerfile; never credentials/logs.
+*
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!README.md
+!auto_signin_http.py
+!geetest_crack.py
+!mousepath.json

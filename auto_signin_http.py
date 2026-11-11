@@ -339,10 +339,11 @@ def login_with_redirects() -> httpx.Client:
 def check_sign_status(client: httpx.Client) -> dict:
     """检查签到状态"""
     resp = client.get("https://www.natfrp.com/cgi/v4/user/info")
+    resp.raise_for_status()
     return resp.json()
 
 
-def sign_in(client: httpx.Client) -> bool:
+def sign_in(client: httpx.Client, user_info: dict = None) -> bool:
     """
     签到流程:
     1. 获取签到的 GeeTest 配置
@@ -353,11 +354,12 @@ def sign_in(client: httpx.Client) -> bool:
     print("[2/3] 正在签到 ...")
 
     # 2.1 检查是否已签到
-    user_info = check_sign_status(client)
+    if user_info is None:
+        user_info = check_sign_status(client)
     print(f"  用户信息: {json.dumps(user_info, ensure_ascii=False)[:200]}...")
 
     sign_info = user_info.get("sign", {})
-    if sign_info.get("signed"):
+    if sign_info.get("signed") is True:
         print(f"  今天已经签到过了! 连续签到 {sign_info.get('days', '?')} 天")
         return True
 
@@ -442,8 +444,10 @@ def sign_in(client: httpx.Client) -> bool:
     print(f"  签到响应: {json.dumps(sign_result, ensure_ascii=False)}")
 
     if isinstance(sign_result, str):
-        # API 直接返回成功消息字符串
-        return True
+        # 字符串可能是错误消息；只以提交后的明确签到状态为准。
+        user_info = check_sign_status(client)
+        sign_info = user_info.get("sign") if isinstance(user_info, dict) else None
+        return isinstance(sign_info, dict) and sign_info.get("signed") is True
     return sign_result.get("status") == "success" or sign_result.get("code") == 0
 
 
@@ -580,20 +584,30 @@ def main():
         client = login_with_redirects()
 
         # 步骤 2: 签到
-        success = sign_in(client)
+        initial_info = check_sign_status(client)
+        initial_sign = initial_info.get("sign") if isinstance(initial_info, dict) else None
+        already_signed = isinstance(initial_sign, dict) and initial_sign.get("signed") is True
+        success = sign_in(client, user_info=initial_info)
 
         # 步骤 3: 验证结果
         print("[3/3] 验证签到结果 ...")
         user_info = check_sign_status(client)
         print(f"  用户信息: {json.dumps(user_info, ensure_ascii=False)[:200]}...")
+        sign_info = user_info.get("sign") if isinstance(user_info, dict) else None
+        success = success and isinstance(sign_info, dict) and sign_info.get("signed") is True
 
         elapsed = time.time() - start_time
         if success:
             print(f"\n✓ 签到成功! 耗时: {elapsed:.1f}s")
+            print("SIGNIN_VERIFIED " + json.dumps({
+                "site": "sakurafrp", "signed": True, "already_signed": already_signed,
+            }, separators=(",", ":")))
         else:
             print(f"\n✗ 签到可能失败，请检查。耗时: {elapsed:.1f}s")
 
         client.close()
+        if not success:
+            sys.exit(1)
 
     except Exception as e:
         print(f"\n✗ 流程出错: {e}")
